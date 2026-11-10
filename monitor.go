@@ -56,8 +56,14 @@ func (m *Monitor) Run(stop <-chan struct{}) {
 func (m *Monitor) poll() {
 	bashoID := CurrentBashoID()
 
+	division, err := m.sumo.FetchDivision()
+	if err != nil {
+		log.Printf("Error fetching division: %v", err)
+		return
+	}
+
 	// First fetch day 1 to get the start date and determine current day
-	resp, err := m.sumo.FetchTorikumi(bashoID, 1)
+	resp, err := m.sumo.FetchTorikumi(bashoID, division, 1)
 	if err != nil {
 		log.Printf("Error fetching day 1 torikumi: %v", err)
 		return
@@ -65,7 +71,7 @@ func (m *Monitor) poll() {
 
 	day := TournamentDay(resp.StartDate)
 	if day < 1 {
-		log.Println("Tournament hasn't started yet")
+		log.Println("No tournament in progress")
 		return
 	}
 
@@ -81,7 +87,7 @@ func (m *Monitor) poll() {
 	}
 
 	// Fetch today's torikumi
-	todayResp, err := m.sumo.FetchTorikumi(bashoID, day)
+	todayResp, err := m.sumo.FetchTorikumi(bashoID, division, day)
 	if err != nil {
 		log.Printf("Error fetching day %d torikumi: %v", day, err)
 		return
@@ -107,7 +113,7 @@ func (m *Monitor) poll() {
 	}
 
 	if wakataBout == nil {
-		log.Printf("Wakatakakage not found in day %d torikumi (may be absent)", day)
+		log.Printf("Wakatakakage not found in day %d %s torikumi (may be absent)", day, division)
 		return
 	}
 
@@ -134,7 +140,7 @@ func (m *Monitor) poll() {
 
 	// Check if bout is completed
 	if boutCompleted && m.state != StateResultSent {
-		m.sendResult(bashoID, wakataBout, opponentName)
+		m.sendResult(bashoID, division, wakataBout, opponentName)
 		m.state = StateResultSent
 		return
 	}
@@ -152,10 +158,10 @@ func (m *Monitor) sendUpcoming(opponent, opponentRank string) {
 	log.Println("Sent upcoming bout notification")
 }
 
-func (m *Monitor) sendResult(bashoID string, bout *Bout, opponent string) {
+func (m *Monitor) sendResult(bashoID, division string, bout *Bout, opponent string) {
 	won := bout.WinnerID == wakatakakageID
 
-	wins, losses, err := m.sumo.FetchWakatakakageRecord(bashoID)
+	wins, losses, err := m.sumo.FetchWakatakakageRecord(bashoID, division)
 	if err != nil {
 		log.Printf("Error fetching record: %v", err)
 		// Fall back to sending without record

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -57,8 +58,39 @@ func NewSumoClient() *SumoClient {
 	}
 }
 
-func (c *SumoClient) FetchTorikumi(bashoID string, day int) (*TorikumiResponse, error) {
-	url := fmt.Sprintf("%s/basho/%s/torikumi/Makuuchi/%d", baseURL, bashoID, day)
+// FetchDivision returns Wakatakakage's current division as used by the API paths.
+func (c *SumoClient) FetchDivision() (string, error) {
+	resp, err := c.http.Get(fmt.Sprintf("%s/rikishi/%d", baseURL, wakatakakageID))
+	if err != nil {
+		return "", fmt.Errorf("fetching rikishi: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("rikishi API returned status %d", resp.StatusCode)
+	}
+
+	var r struct {
+		CurrentRank string `json:"currentRank"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return "", fmt.Errorf("decoding rikishi: %w", err)
+	}
+	return rankDivision(r.CurrentRank), nil
+}
+
+// rankDivision maps a rank like "Juryo 5 West" or "Maegashira 3 East" to its division.
+func rankDivision(rank string) string {
+	switch d, _, _ := strings.Cut(rank, " "); d {
+	case "Juryo", "Makushita", "Sandanme", "Jonidan", "Jonokuchi":
+		return d
+	default: // Yokozuna, Ozeki, Sekiwake, Komusubi, Maegashira
+		return "Makuuchi"
+	}
+}
+
+func (c *SumoClient) FetchTorikumi(bashoID, division string, day int) (*TorikumiResponse, error) {
+	url := fmt.Sprintf("%s/basho/%s/torikumi/%s/%d", baseURL, bashoID, division, day)
 	resp, err := c.http.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("fetching torikumi: %w", err)
@@ -83,8 +115,8 @@ type BanzukeResponse struct {
 	West     []BanzukeEntry `json:"west"`
 }
 
-func (c *SumoClient) FetchBanzuke(bashoID string) ([]BanzukeEntry, error) {
-	url := fmt.Sprintf("%s/basho/%s/banzuke/Makuuchi", baseURL, bashoID)
+func (c *SumoClient) FetchBanzuke(bashoID, division string) ([]BanzukeEntry, error) {
+	url := fmt.Sprintf("%s/basho/%s/banzuke/%s", baseURL, bashoID, division)
 	resp, err := c.http.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("fetching banzuke: %w", err)
@@ -102,8 +134,8 @@ func (c *SumoClient) FetchBanzuke(bashoID string) ([]BanzukeEntry, error) {
 	return append(result.East, result.West...), nil
 }
 
-func (c *SumoClient) FetchWakatakakageRecord(bashoID string) (wins, losses int, err error) {
-	entries, err := c.FetchBanzuke(bashoID)
+func (c *SumoClient) FetchWakatakakageRecord(bashoID, division string) (wins, losses int, err error) {
+	entries, err := c.FetchBanzuke(bashoID, division)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -134,15 +166,13 @@ func CurrentBashoID() string {
 }
 
 // TournamentDay computes which day of the tournament it is (1-15) from the start date.
+// Returns 0 outside the tournament, including when the API has no start date yet (zero time).
 func TournamentDay(startDate time.Time) int {
 	now := time.Now().UTC().Truncate(24 * time.Hour)
 	start := startDate.UTC().Truncate(24 * time.Hour)
 	days := int(now.Sub(start).Hours()/24) + 1
-	if days < 1 {
+	if days < 1 || days > 15 {
 		return 0
-	}
-	if days > 15 {
-		return 15
 	}
 	return days
 }
