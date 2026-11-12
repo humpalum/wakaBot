@@ -21,31 +21,21 @@ type TorikumiResponse struct {
 }
 
 type Bout struct {
-	ID            string `json:"id"`
-	BashoID       string `json:"bashoId"`
-	Division      string `json:"division"`
-	Day           int    `json:"day"`
-	MatchNo       int    `json:"matchNo"`
-	EastID        int    `json:"eastId"`
-	EastShikona   string `json:"eastShikona"`
-	EastRank      string `json:"eastRank"`
-	WestID        int    `json:"westId"`
-	WestShikona   string `json:"westShikona"`
-	WestRank      string `json:"westRank"`
-	Kimarite      string `json:"kimarite"`
-	WinnerID      int    `json:"winnerId"`
-	WinnerEn      string `json:"winnerEn"`
-	WinnerJp      string `json:"winnerJp"`
-}
-
-type BanzukeEntry struct {
-	Side       string `json:"side"`
-	RikishiID  int    `json:"rikishiID"`
-	ShikonaEn  string `json:"shikonaEn"`
-	Rank       string `json:"rank"`
-	Wins       int    `json:"wins"`
-	Losses     int    `json:"losses"`
-	Absences   int    `json:"absences"`
+	ID          string `json:"id"`
+	BashoID     string `json:"bashoId"`
+	Division    string `json:"division"`
+	Day         int    `json:"day"`
+	MatchNo     int    `json:"matchNo"`
+	EastID      int    `json:"eastId"`
+	EastShikona string `json:"eastShikona"`
+	EastRank    string `json:"eastRank"`
+	WestID      int    `json:"westId"`
+	WestShikona string `json:"westShikona"`
+	WestRank    string `json:"westRank"`
+	Kimarite    string `json:"kimarite"`
+	WinnerID    int    `json:"winnerId"`
+	WinnerEn    string `json:"winnerEn"`
+	WinnerJp    string `json:"winnerJp"`
 }
 
 type SumoClient struct {
@@ -108,43 +98,48 @@ func (c *SumoClient) FetchTorikumi(bashoID, division string, day int) (*Torikumi
 	return &result, nil
 }
 
-type BanzukeResponse struct {
-	BashoID  string         `json:"bashoId"`
-	Division string         `json:"division"`
-	East     []BanzukeEntry `json:"east"`
-	West     []BanzukeEntry `json:"west"`
-}
-
-func (c *SumoClient) FetchBanzuke(bashoID, division string) ([]BanzukeEntry, error) {
-	url := fmt.Sprintf("%s/basho/%s/banzuke/%s", baseURL, bashoID, division)
-	resp, err := c.http.Get(url)
+// FetchWakatakakageRecord returns his basho record including today's bout.
+// Today's result comes from the torikumi we already hold: aggregated data (banzuke
+// wins/losses) lags behind it, which made the bot repeat the previous day's record.
+func (c *SumoClient) FetchWakatakakageRecord(bashoID string, today Bout) (wins, losses int, err error) {
+	resp, err := c.http.Get(fmt.Sprintf("%s/rikishi/%d/matches?bashoId=%s", baseURL, wakatakakageID, bashoID))
 	if err != nil {
-		return nil, fmt.Errorf("fetching banzuke: %w", err)
+		return 0, 0, fmt.Errorf("fetching matches: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("banzuke API returned status %d", resp.StatusCode)
+		return 0, 0, fmt.Errorf("matches API returned status %d", resp.StatusCode)
 	}
 
-	var result BanzukeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding banzuke: %w", err)
+	var result struct {
+		Records []Bout `json:"records"`
 	}
-	return append(result.East, result.West...), nil
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, 0, fmt.Errorf("decoding matches: %w", err)
+	}
+	wins, losses = tally(result.Records, today)
+	return wins, losses, nil
 }
 
-func (c *SumoClient) FetchWakatakakageRecord(bashoID, division string) (wins, losses int, err error) {
-	entries, err := c.FetchBanzuke(bashoID, division)
-	if err != nil {
-		return 0, 0, err
-	}
-	for _, e := range entries {
-		if e.RikishiID == wakatakakageID {
-			return e.Wins, e.Losses, nil
+// tally counts results of bouts before today's day, plus today's bout.
+func tally(past []Bout, today Bout) (wins, losses int) {
+	bouts := []Bout{today}
+	for _, b := range past {
+		if b.Day < today.Day {
+			bouts = append(bouts, b)
 		}
 	}
-	return 0, 0, fmt.Errorf("Wakatakakage not found in banzuke")
+	for _, b := range bouts {
+		switch b.WinnerID {
+		case 0: // not fought yet
+		case wakatakakageID:
+			wins++
+		default:
+			losses++
+		}
+	}
+	return wins, losses
 }
 
 // CurrentBashoID returns the basho ID for the current tournament period.

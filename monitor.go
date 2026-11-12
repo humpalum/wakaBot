@@ -140,7 +140,7 @@ func (m *Monitor) poll() {
 
 	// Check if bout is completed
 	if boutCompleted && m.state != StateResultSent {
-		m.sendResult(bashoID, division, wakataBout, opponentName)
+		m.sendResult(bashoID, *wakataBout, opponentName)
 		m.state = StateResultSent
 		return
 	}
@@ -158,28 +158,30 @@ func (m *Monitor) sendUpcoming(opponent, opponentRank string) {
 	log.Println("Sent upcoming bout notification")
 }
 
-func (m *Monitor) sendResult(bashoID, division string, bout *Bout, opponent string) {
+func (m *Monitor) sendResult(bashoID string, bout Bout, opponent string) {
 	won := bout.WinnerID == wakatakakageID
 
-	wins, losses, err := m.sumo.FetchWakatakakageRecord(bashoID, division)
+	wins, losses, err := m.sumo.FetchWakatakakageRecord(bashoID, bout)
 	if err != nil {
 		log.Printf("Error fetching record: %v", err)
 		// Fall back to sending without record
 		wins, losses = -1, -1
 	}
 
-	var msg string
+	var outcome string
 	if won {
-		msg = fmt.Sprintf("**Wakatakakage wins!** He defeated **%s** by **%s**.",
+		outcome = fmt.Sprintf("**Wakatakakage wins!** He defeated **%s** by **%s**.",
 			opponent, bout.Kimarite)
 	} else {
-		msg = fmt.Sprintf("**Wakatakakage loses.** He was defeated by **%s** via **%s**.",
+		outcome = fmt.Sprintf("**Wakatakakage loses.** He was defeated by **%s** via **%s**.",
 			opponent, bout.Kimarite)
 	}
-
 	if wins >= 0 {
-		msg += fmt.Sprintf(" Current record: **%d-%d**.", wins, losses)
+		outcome += fmt.Sprintf(" Current record: **%d-%d**.", wins, losses)
 	}
+
+	// Spoiler-tag the outcome so the bout can be rewatched without knowing the result.
+	msg := fmt.Sprintf("Wakatakakage's bout against **%s** is over. Result: ||%s||", opponent, outcome)
 
 	_, err = m.discord.ChannelMessageSend(m.channelID, msg)
 	if err != nil {

@@ -31,24 +31,39 @@ func TestSumoAPIIntegration(t *testing.T) {
 	}
 
 	// Find Wakatakakage in day 1
-	found := false
-	for _, b := range resp.Torikumi {
+	var day1 *Bout
+	for i, b := range resp.Torikumi {
 		if b.EastID == wakatakakageID || b.WestID == wakatakakageID {
-			found = true
+			day1 = &resp.Torikumi[i]
 			fmt.Printf("Day 1 match: #%d | %s (%s) vs %s (%s) | Winner: %s | Kimarite: %s\n",
 				b.MatchNo, b.EastShikona, b.EastRank, b.WestShikona, b.WestRank, b.WinnerEn, b.Kimarite)
 		}
 	}
-	if !found {
-		t.Log("Wakatakakage not found in day 1 (may be absent)")
+	if day1 == nil {
+		t.Skip("Wakatakakage not found in day 1 (may be absent)")
 	}
 
-	// Fetch record
-	wins, losses, err := client.FetchWakatakakageRecord(bashoID, division)
+	wins, losses, err := client.FetchWakatakakageRecord(bashoID, *day1)
 	if err != nil {
 		t.Fatalf("FetchWakatakakageRecord error: %v", err)
 	}
-	fmt.Printf("Current record: %d-%d\n", wins, losses)
+	fmt.Printf("Record after day 1: %d-%d\n", wins, losses)
+}
+
+func TestTally(t *testing.T) {
+	past := []Bout{
+		{Day: 1, WinnerID: wakatakakageID},
+		{Day: 2, WinnerID: 99},
+		{Day: 3, WinnerID: 0},  // stale: aggregated data not caught up with today's result
+		{Day: 4, WinnerID: 99}, // later day must not count
+	}
+	if w, l := tally(past, Bout{Day: 3, WinnerID: wakatakakageID}); w != 2 || l != 1 {
+		t.Errorf("tally = %d-%d, want 2-1", w, l)
+	}
+	past[2].WinnerID = wakatakakageID // already caught up: no double count
+	if w, l := tally(past, Bout{Day: 3, WinnerID: wakatakakageID}); w != 2 || l != 1 {
+		t.Errorf("tally = %d-%d, want 2-1", w, l)
+	}
 }
 
 func TestRankDivision(t *testing.T) {
